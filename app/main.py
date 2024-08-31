@@ -123,7 +123,18 @@ def upload_files():
         all_texts.extend(texts)
     
     # Use LangChain's Pinecone integration to index the documents
-    LangChainPinecone.from_documents(all_texts, embeddings, index_name=INDEX_NAME)
+    global vectorstore  # Declare vectorstore as global to update it
+    vectorstore = LangChainPinecone.from_documents(all_texts, embeddings, index_name=INDEX_NAME)
+    
+    # Reinitialize the QA chain with the new vectorstore
+    global qa_chain
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=vectorstore.as_retriever(),
+        return_source_documents=True,
+        chain_type_kwargs={"prompt": PROMPT}
+    )
     
     return jsonify({"message": f"{len(uploaded_files)} file(s) uploaded and indexed successfully"}), 200
 
@@ -139,6 +150,7 @@ def ask_question():
     answer = result['result']
     sources = list(set([doc.metadata.get('source', 'Unknown') for doc in result['source_documents']]))
     
+    # Ensure the full answer is returned
     return jsonify({"answer": answer, "sources": sources}), 200
 
 if __name__ == '__main__':

@@ -66,7 +66,7 @@
                 const response = await axios.post('/ask', { question });
                 document.getElementById('answer').innerHTML = `
                     <h3>Answer:</h3>
-                    <p>${response.data.answer}</p>
+                    <p style="white-space: pre-wrap;">${response.data.answer}</p>
                     <h4>Sources:</h4>
                     <ul>${[...new Set(response.data.sources)].map(source => `<li>${source}</li>`).join('')}</ul>
                 `;
