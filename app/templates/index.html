@@ -5,19 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document Q&A System</title>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-bottom: 10px;
+        }
+        #answer {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+        }
+    </style>
 </head>
 <body>
     <h1>Document Q&A System</h1>
     
-    <h2>Upload Document</h2>
+    <h2>Upload Documents</h2>
     <form id="uploadForm">
-        <input type="file" name="file" accept=".pdf">
+        <input type="file" name="files" accept=".pdf" multiple>
         <button type="submit">Upload</button>
     </form>
     
     <h2>Ask a Question</h2>
     <form id="questionForm">
-        <input type="text" id="question" name="question" required>
+        <textarea id="question" name="question" required placeholder="Enter your question here"></textarea>
         <button type="submit">Ask</button>
     </form>
     
@@ -28,10 +46,16 @@
             e.preventDefault();
             const formData = new FormData(e.target);
             try {
-                const response = await axios.post('/upload', formData);
+                const response = await axios.post('/upload', formData, {
+                    headers: {
+                        'Content-Type': 'multipart/form-data'
+                    }
+                });
                 alert(response.data.message);
+                // Clear the previous answer
+                document.getElementById('answer').innerHTML = '';
             } catch (error) {
-                alert('Error uploading file: ' + error.response.data.error);
+                alert('Error uploading file(s): ' + error.response.data.error);
             }
         });
 
@@ -44,7 +68,7 @@
                     <h3>Answer:</h3>
                     <p>${response.data.answer}</p>
                     <h4>Sources:</h4>
-                    <ul>${response.data.sources.map(source => `<li>${source}</li>`).join('')}</ul>
+                    <ul>${[...new Set(response.data.sources)].map(source => `<li>${source}</li>`).join('')}</ul>
                 `;
             } catch (error) {
                 alert('Error asking question: ' + error.response.data.error);

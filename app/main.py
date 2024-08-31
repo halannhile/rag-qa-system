@@ -4,20 +4,13 @@ import os
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Pinecone as LangChainPinecone
 from langchain_openai import OpenAI
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-import pinecone
-from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS
-from utils import allowed_file
 from pinecone import Pinecone, ServerlessSpec
 import logging
-
-from langchain_huggingface import HuggingFaceEmbeddings
-# from langchain.embeddings import HuggingFaceEmbeddings
-
 
 # Load environment variables
 load_dotenv()
@@ -25,38 +18,37 @@ load_dotenv()
 app = Flask(__name__)
 
 # Configure the upload settings
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'pdf'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit.
 
 # Initialize Pinecone
 pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY'))
 
-# Delete the existing index
-if "document-store" in pc.list_indexes().names():
-    pc.delete_index("document-store")
+# Global variables
+INDEX_NAME = "document-store"
 
-# Create a new index with the correct dimension
-pc.create_index(
-    name="document-store",
-    dimension=384,  # Set this to match your current embedding model
-    metric="cosine",
-    spec=ServerlessSpec(
-        cloud="aws",
-        region="us-east-1"
+# Check if the index exists, if not, create it
+if INDEX_NAME not in pc.list_indexes().names():
+    pc.create_index(
+        name=INDEX_NAME,
+        dimension=384,  # Set this to match your current embedding model
+        metric="cosine",
+        spec=ServerlessSpec(
+            cloud="aws",
+            region="us-east-1"
+        )
     )
-)
 
 # Get the index
-index = pc.Index("document-store")
+index = pc.Index(INDEX_NAME)
 
-# # Initialize LangChain components
-# embeddings = OpenAIEmbeddings(openai_api_key=os.getenv('OPENAI_API_KEY'))
-
-# Replace the OpenAI embeddings with HuggingFace embeddings
+# Initialize embeddings
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 # Create LangChain vectorstore
-vectorstore = LangChainPinecone.from_existing_index("document-store", embeddings)
+vectorstore = LangChainPinecone.from_existing_index(INDEX_NAME, embeddings)
 
 # Initialize OpenAI LLM
 llm = OpenAI(temperature=0, openai_api_key=os.getenv('OPENAI_API_KEY'))
@@ -85,6 +77,9 @@ qa_chain = RetrievalQA.from_chain_type(
 
 logging.basicConfig(level=logging.DEBUG)
 
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 @app.route('/', methods=['GET'])
 def index():
     app.logger.info('Index route accessed')
@@ -95,29 +90,42 @@ def index():
         return f"An error occurred: {str(e)}", 500
 
 @app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
+def upload_files():
+    if 'files' not in request.files:
         return jsonify({"error": "No file part"}), 400
-    file = request.files['file']
-    if file.filename == '':
+    
+    files = request.files.getlist('files')
+    
+    if not files or files[0].filename == '':
         return jsonify({"error": "No selected file"}), 400
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        
-        # Process and index the file using LangChain
+    
+    uploaded_files = []
+    for file in files:
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+            uploaded_files.append(filepath)
+    
+    if not uploaded_files:
+        return jsonify({"error": "No valid files uploaded"}), 400
+    
+    # Clear existing vectors from the index
+    index.delete(delete_all=True)
+    
+    # Process and index the files using LangChain
+    all_texts = []
+    for filepath in uploaded_files:
         loader = PyPDFLoader(filepath)
         documents = loader.load()
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         texts = text_splitter.split_documents(documents)
-        
-        # Use LangChain's Pinecone integration to index the documents
-        index_name = "document-store"  # Define the index name here
-        LangChainPinecone.from_documents(texts, embeddings, index_name=index_name)
-        
-        return jsonify({"message": "File uploaded and indexed successfully"}), 200
-    return jsonify({"error": "File type not allowed"}), 400
+        all_texts.extend(texts)
+    
+    # Use LangChain's Pinecone integration to index the documents
+    LangChainPinecone.from_documents(all_texts, embeddings, index_name=INDEX_NAME)
+    
+    return jsonify({"message": f"{len(uploaded_files)} file(s) uploaded and indexed successfully"}), 200
 
 @app.route('/ask', methods=['POST'])
 def ask_question():
@@ -129,7 +137,7 @@ def ask_question():
     result = qa_chain({"query": question})
     
     answer = result['result']
-    sources = [doc.metadata.get('source', 'Unknown') for doc in result['source_documents']]
+    sources = list(set([doc.metadata.get('source', 'Unknown') for doc in result['source_documents']]))
     
     return jsonify({"answer": answer, "sources": sources}), 200
 
