@@ -2,31 +2,63 @@ from flask import Flask, request, jsonify, render_template
 from werkzeug.utils import secure_filename
 import os
 from dotenv import load_dotenv
-from langchain.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Pinecone
-from langchain.llms import OpenAI
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import Pinecone as LangChainPinecone
+from langchain_openai import OpenAI
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 import pinecone
 from config import UPLOAD_FOLDER, ALLOWED_EXTENSIONS
 from utils import allowed_file
+from pinecone import Pinecone, ServerlessSpec
+import logging
+
+from langchain_huggingface import HuggingFaceEmbeddings
+# from langchain.embeddings import HuggingFaceEmbeddings
+
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 
-# Initialize Pinecone
-pinecone.init(api_key=os.getenv('PINECONE_API_KEY'), environment=os.getenv('PINECONE_ENV'))
-index_name = "document-store"
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(index_name, dimension=1536)  # OpenAI embedding dimension
+# Configure the upload settings
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max-limit.
 
-# Initialize LangChain components
-embeddings = OpenAIEmbeddings(openai_api_key=os.getenv('OPENAI_API_KEY'))
-vectorstore = Pinecone.from_existing_index(index_name, embeddings)
+# Initialize Pinecone
+pc = Pinecone(api_key=os.getenv('PINECONE_API_KEY'))
+
+# Delete the existing index
+if "document-store" in pc.list_indexes().names():
+    pc.delete_index("document-store")
+
+# Create a new index with the correct dimension
+pc.create_index(
+    name="document-store",
+    dimension=384,  # Set this to match your current embedding model
+    metric="cosine",
+    spec=ServerlessSpec(
+        cloud="aws",
+        region="us-east-1"
+    )
+)
+
+# Get the index
+index = pc.Index("document-store")
+
+# # Initialize LangChain components
+# embeddings = OpenAIEmbeddings(openai_api_key=os.getenv('OPENAI_API_KEY'))
+
+# Replace the OpenAI embeddings with HuggingFace embeddings
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+# Create LangChain vectorstore
+vectorstore = LangChainPinecone.from_existing_index("document-store", embeddings)
+
+# Initialize OpenAI LLM
 llm = OpenAI(temperature=0, openai_api_key=os.getenv('OPENAI_API_KEY'))
 
 # Create a custom prompt template
@@ -51,9 +83,16 @@ qa_chain = RetrievalQA.from_chain_type(
     chain_type_kwargs={"prompt": PROMPT}
 )
 
+logging.basicConfig(level=logging.DEBUG)
+
 @app.route('/', methods=['GET'])
 def index():
-    return render_template('index.html')
+    app.logger.info('Index route accessed')
+    try:
+        return render_template('index.html')
+    except Exception as e:
+        app.logger.error(f'Error rendering template: {str(e)}')
+        return f"An error occurred: {str(e)}", 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -73,7 +112,9 @@ def upload_file():
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         texts = text_splitter.split_documents(documents)
         
-        Pinecone.from_documents(texts, embeddings, index_name=index_name)
+        # Use LangChain's Pinecone integration to index the documents
+        index_name = "document-store"  # Define the index name here
+        LangChainPinecone.from_documents(texts, embeddings, index_name=index_name)
         
         return jsonify({"message": "File uploaded and indexed successfully"}), 200
     return jsonify({"error": "File type not allowed"}), 400

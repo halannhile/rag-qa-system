@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Q&A System</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body>
+    <h1>Document Q&A System</h1>
+    
+    <h2>Upload Document</h2>
+    <form id="uploadForm">
+        <input type="file" name="file" accept=".pdf">
+        <button type="submit">Upload</button>
+    </form>
+    
+    <h2>Ask a Question</h2>
+    <form id="questionForm">
+        <input type="text" id="question" name="question" required>
+        <button type="submit">Ask</button>
+    </form>
+    
+    <div id="answer"></div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            try {
+                const response = await axios.post('/upload', formData);
+                alert(response.data.message);
+            } catch (error) {
+                alert('Error uploading file: ' + error.response.data.error);
+            }
+        });
+
+        document.getElementById('questionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const question = document.getElementById('question').value;
+            try {
+                const response = await axios.post('/ask', { question });
+                document.getElementById('answer').innerHTML = `
+                    <h3>Answer:</h3>
+                    <p>${response.data.answer}</p>
+                    <h4>Sources:</h4>
+                    <ul>${response.data.sources.map(source => `<li>${source}</li>`).join('')}</ul>
+                `;
+            } catch (error) {
+                alert('Error asking question: ' + error.response.data.error);
+            }
+        });
+    </script>
+</body>
+</html>

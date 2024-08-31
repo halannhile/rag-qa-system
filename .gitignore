@@ -1,1 +1,6 @@
 .env
+__pycache__/
+
+# Project specific
+uploads/
+*.pdf

@@ -1,8 +1,7 @@
 import os
 
-# Configuration variables
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'pdf'}
 
-# Ensure the upload folder exists
+# Create the upload folder if it doesn't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)

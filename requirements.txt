@@ -2,5 +2,7 @@ flask
 python-dotenv
 pinecone-client
 langchain
+langchain-community
 openai
 werkzeug
+sentence-transformers
